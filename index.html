@@ -3,10 +3,322 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Creon Helper</title>
+  <title>Creon Helper — Foto → Grassi → Capsule</title>
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    :root{--bg:#f7f9fc;--card:#fff;--text:#0f172a;--muted:#64748b;--primary:#2563eb;--ring:#93c5fd}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;color:var(--text);background:linear-gradient(#f8fafc,#fff)}
+    .container{max-width:1100px;margin:0 auto;padding:22px}
+    .grid{display:grid;gap:16px} @media(min-width:980px){.grid-3{grid-template-columns:2fr 2fr 1.2fr}}
+    h1{margin:0 0 8px;font-size:24px} p.lead{margin:0 0 12px;color:var(--muted)}
+    .card{background:var(--card);border:1px solid #e5e7eb;border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    input[type="number"],input[type="text"],select{width:100%;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px}
+    input:focus,select:focus,button:focus{outline:none;box-shadow:0 0 0 3px var(--ring)}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;cursor:pointer}
+    .btn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .pill{display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:6px 10px;font-size:13px}
+    .muted{color:var(--muted)} .warn{color:#b45309}
+    .imgwrap{width:100%;aspect-ratio:4/3;border:1px dashed #cbd5e1;border-radius:14px;display:grid;place-items:center;overflow:hidden;position:relative}
+    video,.preview{width:100%;height:100%;object-fit:cover}
+    .scroll{max-height:220px;overflow:auto;border:1px solid #eaecef;border-radius:10px}
+    .item{padding:8px 10px;border-bottom:1px solid #eef2f7;cursor:pointer} .item:hover{background:#f8fafc}
+    #installBanner{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:12px;display:none;z-index:50}
+  </style>
+  <!-- Modelli in-browser -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0"></script>
 </head>
 <body>
-  <h1>Creon Helper pronto!</h1>
-  <p>Questo è un placeholder. Incolla qui il codice completo che ti ho fornito in precedenza.</p>
+  <!-- Banner installazione PWA (Android/desktop) -->
+  <div id="installBanner" class="row">
+    <div class="muted">Vuoi installare <b>Creon Helper</b> sul dispositivo?</div>
+    <div style="flex:1"></div>
+    <button id="installBtn" class="btn primary">Installa</button>
+    <button id="dismissBtn" class="btn">Chiudi</button>
+  </div>
+
+  <div class="container">
+    <h1>Creon Helper</h1>
+    <p class="lead">Scatta foto → riconoscimento alimento → recupero <b>grassi/100 g</b> → calcolo capsule (1 caps/4 g, max 7).</p>
+
+    <div class="grid grid-3">
+      <!-- 1. Fotocamera + Riconoscimento -->
+      <div class="card">
+        <h3>Fotocamera</h3>
+        <div class="imgwrap" id="cameraBox">
+          <video id="video" autoplay playsinline></video>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="snapBtn">📸 Scatta foto</button>
+          <button class="btn" id="retakeBtn" style="display:none">♻️ Nuovo scatto</button>
+          <button class="btn primary" id="recognizeBtn">🔍 Riconosci alimento</button>
+        </div>
+        <div style="margin-top:12px">
+          <label>Etichette riconosciute (clicca per usare quella etichetta)</label>
+          <div id="labelsBox" class="scroll"></div>
+        </div>
+      </div>
+
+      <!-- 2. Ricerca OFF + Porzione -->
+      <div class="card">
+        <h3>Alimento e porzione</h3>
+
+        <label>Ricerca prodotti su Open Food Facts</label>
+        <div class="row">
+          <input id="offQuery" type="text" placeholder="Es. pizza margherita, barretta Kinder, pasta Barilla..." />
+          <button class="btn" id="offSearch">Cerca</button>
+        </div>
+        <div id="offResults" class="scroll" style="margin-top:8px; display:none"></div>
+
+        <div class="row" style="margin-top:12px">
+          <div style="flex:1">
+            <label>Porzione (g)</label>
+            <input id="portion" type="number" value="150" min="10" step="5" />
+          </div>
+          <div class="row" style="gap:6px">
+            <span class="pill quick" data-g="50">50 g</span>
+            <span class="pill quick" data-g="100">100 g</span>
+            <span class="pill quick" data-g="150">150 g</span>
+            <span class="pill quick" data-g="200">200 g</span>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Grassi manuali (opzionale, g)</label>
+          <input id="fatManual" type="number" step="0.1" placeholder="Es. 12.5" />
+          <p class="muted" style="font-size:12px;margin:6px 0 0">
+            Se conosci i grassi dalla confezione, inseriscili qui e calcolo subito le capsule.
+          </p>
+        </div>
+      </div>
+
+      <!-- 3. Impostazioni + Risultati -->
+      <div class="card">
+        <h3>Risultato</h3>
+        <div class="row">
+          <div class="pill">Grassi totali: <b id="fatTotal">0</b> g</div>
+          <div class="pill">Capsule: <b id="capsResult">0</b></div>
+        </div>
+        <p id="warnBox" class="muted warn" style="margin-top:8px"></p>
+
+        <h3 style="margin-top:16px">Impostazioni</h3>
+        <div class="row">
+          <div style="flex:1">
+            <label>g di grassi per capsula</label>
+            <input id="gPerCap" type="number" value="4" step="0.5" />
+          </div>
+          <div style="flex:1">
+            <label>Arrotondamento</label>
+            <select id="roundRule">
+              <option value="ceil" selected>Per eccesso</option>
+              <option value="round">Matematico</option>
+              <option value="floor">Per difetto</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Max capsule</label>
+            <input id="maxCaps" type="number" value="7" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="muted" style="margin-top:14px;font-size:12px">
+      ⚠️ Strumento educativo: i valori possono variare per marca/ricetta. Per precisione usa sempre l’etichetta nutrizionale.
+    </p>
+  </div>
+
+  <script>
+    /* ============================
+       PWA: Install banner + SW
+    ============================ */
+    let deferredPrompt=null;
+    const banner=document.getElementById('installBanner');
+    window.addEventListener('beforeinstallprompt',(e)=>{e.preventDefault();deferredPrompt=e;banner.style.display='flex'});
+    document.getElementById('installBtn').addEventListener('click',async()=>{ if(!deferredPrompt) return; deferredPrompt.prompt(); await deferredPrompt.userChoice; banner.style.display='none'; deferredPrompt=null;});
+    document.getElementById('dismissBtn').addEventListener('click',()=> banner.style.display='none');
+    if('serviceWorker' in navigator){ window.addEventListener('load',()=> navigator.serviceWorker.register('./sw.js')); }
+
+    /* ============================
+       Stato + Helper
+    ============================ */
+    let model=null;         // MobileNet
+    let stream=null;        // Camera
+    let lastFatPer100=null; // g/100g dell'elemento selezionato (da OFF o mapping)
+    const $ = (id)=>document.getElementById(id);
+    const fmt = (n)=> (Math.round(n*10)/10).toLocaleString('it-IT');
+
+    function calcAndRender(){
+      const portion = Number($('portion').value || 0);
+      const gpc = Number($('gPerCap').value || 4);
+      const maxCaps = Number($('maxCaps').value || 7);
+      const rr = $('roundRule').value;
+
+      // Se l'utente ha messo i grassi manuali, usali. Altrimenti usa lastFatPer100.
+      let fatTotal = 0;
+      const fatManual = $('fatManual').value.trim();
+      if (fatManual !== '') {
+        fatTotal = Number(fatManual) || 0;
+      } else if (Number.isFinite(lastFatPer100)) {
+        fatTotal = portion * lastFatPer100 / 100;
+      } else {
+        fatTotal = 0;
+      }
+
+      $('fatTotal').textContent = fmt(fatTotal);
+      let caps = gpc>0 ? (fatTotal / gpc) : 0;
+      if (rr==='ceil') caps = Math.ceil(caps);
+      else if (rr==='floor') caps = Math.floor(caps);
+      else caps = Math.round(caps);
+      if (Number.isFinite(maxCaps)) caps = Math.min(caps, maxCaps);
+      $('capsResult').textContent = caps;
+      $('warnBox').textContent = caps >= maxCaps ? 'Dose elevata: verifica con il medico.' : '';
+    }
+
+    /* ============================
+       Fotocamera
+    ============================ */
+    async function initCamera(){
+      const video=$('video') || $('video'); // compat
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' }});
+        $('video').srcObject = stream;
+      }catch(err){ alert('Errore accesso fotocamera: '+err); }
+    }
+
+    $('snapBtn').addEventListener('click', ()=>{
+      const video=$('video');
+      const canvas=document.createElement('canvas');
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0);
+      const img = new Image();
+      img.src = canvas.toDataURL('image/png');
+      img.className='preview'; img.id='captured';
+      $('cameraBox').innerHTML=''; $('cameraBox').appendChild(img);
+      $('snapBtn').style.display='none'; $('retakeBtn').style.display='inline-flex';
+    });
+
+    $('retakeBtn').addEventListener('click', ()=>{
+      $('cameraBox').innerHTML='<video id="video" autoplay playsinline></video>';
+      $('snapBtn').style.display='inline-flex'; $('retakeBtn').style.display='none';
+      initCamera();
+    });
+
+    /* ============================
+       Riconoscimento con MobileNet
+    ============================ */
+    async function ensureModel(){ if(!model){ model = await mobilenet.load(); } return model; }
+
+    // Mapping di fallback (stima media g/100g per piatti comuni italiani)
+    const MAP_FAT = {
+      "pizza margherita": 9, "pizza": 9,
+      "risotto allo zafferano": 7, "risotto": 7, "riso": 1,
+      "pasta": 2, "spaghetti": 2, "pasta al pomodoro": 3,
+      "pollo al forno": 8, "pollo": 8, "patate al forno": 5,
+      "mozzarella": 17, "yogurt greco": 10, "yogurt": 3,
+      "salmon": 13, "salmone": 13, "burro": 82, "olio": 100
+    };
+
+    function renderLabels(preds){
+      const box = $('labelsBox'); box.innerHTML='';
+      preds.slice(0,5).forEach(p=>{
+        const div=document.createElement('div'); div.className='item';
+        div.textContent = `${p.className} — ${(p.probability*100).toFixed(1)}%`;
+        div.addEventListener('click', ()=>{
+          $('offQuery').value = p.className;
+          searchOFF(); // ricerca diretta su OFF
+        });
+        box.appendChild(div);
+      });
+      if(!preds.length){ box.innerHTML = '<div class="item">Nessuna etichetta trovata.</div>'; }
+    }
+
+    $('recognizeBtn').addEventListener('click', async ()=>{
+      const img = $('captured');
+      if(!img){ alert('Scatta prima una foto'); return; }
+      const m = await ensureModel();
+      const preds = await m.classify(img);
+      renderLabels(preds);
+
+      // auto-query OFF con la migliore etichetta
+      if (preds[0]?.className) {
+        $('offQuery').value = preds[0].className;
+        await searchOFF(true); // true = auto-mode
+      }
+    });
+
+    /* ============================
+       Ricerca su Open Food Facts
+    ============================ */
+    async function searchOFF(auto=false){
+      const q = $('offQuery').value.trim();
+      if(!q){ alert('Scrivi un alimento o marca'); return; }
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=product_name,brands,nutriments`;
+      try{
+        const res = await fetch(url);
+        const json = await res.json();
+        const products = (json.products||[]).filter(p=> p?.nutriments?.fat_100g != null);
+        const list = $('offResults'); list.innerHTML=''; list.style.display='block';
+
+        if(!products.length){
+          // fallback: usa mapping se disponibile
+          const key = q.toLowerCase();
+          if (MAP_FAT[key] != null) {
+            lastFatPer100 = MAP_FAT[key];
+            calcAndRender();
+            list.innerHTML = `<div class="item">OFF non trovato. Uso stima: ${lastFatPer100} g/100g per “${q}”.</div>`;
+          } else {
+            list.innerHTML = '<div class="item">Nessun risultato OFF con grassi disponibili.</div>';
+          }
+          return;
+        }
+
+        // Se auto-mode: prendi il primo e calcola subito
+        if (auto) {
+          const p = products[0];
+          lastFatPer100 = Number(p.nutriments.fat_100g);
+          calcAndRender();
+        }
+
+        // Mostra la lista cliccabile dei prodotti
+        products.forEach(p=>{
+          const name = [p.product_name, p.brands].filter(Boolean).join(' — ') || 'Prodotto';
+          const fat = Number(p.nutriments.fat_100g);
+          const div = document.createElement('div'); div.className='item';
+          div.innerHTML = `${name} <span class="muted">• grassi/100g: ${Number.isFinite(fat)?fat:'?'}</span>`;
+          div.addEventListener('click', ()=>{ lastFatPer100 = fat; calcAndRender(); });
+          list.appendChild(div);
+        });
+      }catch(e){
+        alert('Errore OFF: '+e);
+      }
+    }
+
+    $('offSearch').addEventListener('click', ()=> searchOFF(false));
+
+    /* ============================
+       UI: porzioni veloci + ricalcolo
+    ============================ */
+    document.querySelectorAll('.quick').forEach(el=>{
+      el.addEventListener('click', ()=>{ $('portion').value = el.getAttribute('data-g'); calcAndRender(); });
+    });
+    ['portion','gPerCap','roundRule','maxCaps','fatManual'].forEach(id=>{
+      $(id).addEventListener('input', calcAndRender);
+      $(id).addEventListener('change', calcAndRender);
+    });
+
+    /* ============================
+       Start
+    ============================ */
+    initCamera();
+    calcAndRender();
+  </script>
 </body>
 </html>
